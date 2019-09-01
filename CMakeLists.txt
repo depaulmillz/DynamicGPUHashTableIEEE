@@ -21,7 +21,7 @@ endif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 
 if(NOT DEFINED CUDA_ARCH)
     message("WARNING CUDA_ARCH IS BEING SET TO DEFAULT")
-    set(CUDA_ARCH 61)
+    set(CUDA_ARCH 75)
 endif(NOT DEFINED CUDA_ARCH)
 
 string(APPEND CMAKE_CUDA_FLAGS " -Xptxas=-v -gencode arch=compute_${CUDA_ARCH},code=sm_${CUDA_ARCH} -Wreorder")
@@ -30,3 +30,6 @@ add_compile_options("$<$<CONFIG:DEBUG>:-DDEBUG>")
 
 ENABLE_TESTING()
 ADD_SUBDIRECTORY(tests)
+
+
+add_library(Operations Operations.cu)
