@@ -9,6 +9,6 @@ for p in "${write[@]}"
 do
     for i in "${size[@]}"
     do
-        timeout 15m numactl ./OnlineThroughputTest -m $i -w $p > "$p-$i.txt" 2>&1
+        timeout 15m numactl ./ThroughputTest -m $i -w $p > "$p-$i.txt" 2>&1
     done
 done
