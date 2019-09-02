@@ -4,7 +4,7 @@
 #include <nvfunctional>
 
 #define SEARCH_NOT_FOUND 0
-#define ADDRESS_LANE 31
+#define ADDRESS_LANE 32
 #define VALID_KEY_MASK 0x7fffffff
 #define DELETED_KEY 0
 
@@ -18,12 +18,12 @@ struct Slab {
   unsigned long long *next;
 };
 
-Slab **slabs = NULL;
+volatile Slab **slabs = NULL;
 __managed__ unsigned num_of_buckets = 0;
 
 __host__ __device__ unsigned hash(unsigned src_key);
 
-__device__ unsigned long long ReadSlab(const unsigned long long &next, const unsigned &src_bucket, const unsigned laneId, Slab **slabs, unsigned num_of_buckets) {
+__device__ unsigned long long ReadSlab(const volatile unsigned long long &next, const volatile unsigned &src_bucket, const unsigned laneId, volatile Slab **slabs, unsigned num_of_buckets) {
   if (src_bucket >= num_of_buckets) {
     printf("Error\n");
   }
@@ -33,13 +33,16 @@ __device__ unsigned long long ReadSlab(const unsigned long long &next, const uns
   return *slabs[src_bucket][next - 1].next;
 }
 
-__device__ unsigned long long *SlabAddress(const unsigned long long &next, const unsigned &src_bucket, const unsigned laneId, Slab **slabs, unsigned num_of_buckets) {
+__device__ unsigned long long *SlabAddress(const volatile unsigned long long &next, const volatile unsigned &src_bucket, const unsigned laneId, volatile Slab **slabs, unsigned num_of_buckets) {
   if (src_bucket >= num_of_buckets) {
     printf("Error\n");
   }
   if (laneId != 31) {
+    // printf("Got addr %p src_bucket %d\n", slabs[src_bucket][next - 1].keyValue + laneId, src_bucket);
+
     return (slabs[src_bucket][next - 1].keyValue + laneId);
   } else {
+    // printf("Got addr for next\n");
     return slabs[src_bucket][next - 1].next;
   }
 }
@@ -54,31 +57,35 @@ __device__ unsigned long long deallocate(unsigned long long l) {
 }
 
 __device__ void warp_operation(volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue,
-                               const nvstd::function<void(volatile bool *, volatile unsigned *, volatile unsigned *, unsigned &, unsigned &, unsigned &, unsigned long long &, unsigned long long &, Slab **, unsigned)> &operation, Slab **slabs,
-                               unsigned num_of_buckets) {
+                               const nvstd::function<void(volatile bool *, volatile unsigned *, volatile unsigned *, volatile unsigned &, volatile unsigned &, volatile unsigned &, volatile unsigned long long &, volatile unsigned long long &,
+                                                          volatile Slab **, unsigned)> &operation,
+                               volatile Slab **slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
-  unsigned long long next = BASE_SLAB;
+  volatile unsigned long long next = BASE_SLAB;
   volatile unsigned work_queue = __ballot_sync(~0, is_active[tid]);
 
   volatile unsigned last_work_queue = work_queue;
 
   while (work_queue != 0) {
     next = (work_queue != last_work_queue) ? (BASE_SLAB) : next;
-    unsigned src_lane = __ffs(work_queue);
-    unsigned src_key = __shfl_sync(~0, myKey[tid], src_lane);
-    unsigned src_bucket = hash(src_key);
-    unsigned long long read_data = ReadSlab(next, src_bucket, laneId, slabs, num_of_buckets);
+    volatile unsigned src_lane = __ffs(work_queue);
+    volatile unsigned src_key = __shfl_sync(~0, myKey[tid], src_lane);
+    volatile unsigned src_bucket = hash(src_key);
+    // if (laneId == 0)
+    //  printf("src_lane %d from %d: %d -> %d\n", src_lane, work_queue, src_key, src_bucket);
+    volatile unsigned long long read_data = ReadSlab(next, src_bucket, laneId, slabs, num_of_buckets);
 
     operation(is_active, myKey, myValue, src_lane, src_key, src_bucket, read_data, next, slabs, num_of_buckets);
     last_work_queue = work_queue;
     bool activity = is_active[tid];
+
     work_queue = __ballot_sync(~0, activity);
   }
 }
 
-__device__ void warp_search(volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, const unsigned &src_lane, const unsigned &src_key, const unsigned &src_bucket, const unsigned long long &read_data, unsigned long long &next,
-                            Slab **slabs, unsigned num_of_buckets) {
+__device__ void warp_search(volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, volatile unsigned &src_lane, volatile unsigned &src_key, volatile unsigned &src_bucket, volatile unsigned long long &read_data,
+                            volatile unsigned long long &next, volatile Slab **slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
   unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
@@ -103,15 +110,15 @@ __device__ void warp_search(volatile bool *is_active, volatile unsigned *myKey, 
   }
 }
 
-__device__ void warp_delete(volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, unsigned &src_lane, unsigned &src_key, unsigned &src_bucket, unsigned long long &read_data, unsigned long long &next, Slab **slabs,
-                            unsigned num_of_buckets) {
+__device__ void warp_delete(volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, volatile unsigned &src_lane, volatile unsigned &src_key, volatile unsigned &src_bucket, volatile unsigned long long &read_data,
+                            volatile unsigned long long &next, volatile Slab **slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
   unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
   unsigned dest_lane = __ffs(__ballot_sync(VALID_KEY_MASK, key == src_key));
   if (dest_lane != 0) {
     if (src_lane - 1 == laneId) {
-      *(SlabAddress(next, src_bucket, src_lane, slabs, num_of_buckets)) = DELETED_KEY;
+      *(SlabAddress(next, src_bucket, dest_lane - 1, slabs, num_of_buckets)) = DELETED_KEY;
       is_active[tid] = false;
     }
   } else {
@@ -124,11 +131,12 @@ __device__ void warp_delete(volatile bool *is_active, volatile unsigned *myKey, 
   }
 }
 
-__device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, unsigned &src_lane, unsigned &src_key, unsigned &src_bucket, unsigned long long &read_data, unsigned long long &next, Slab **slabs,
-                             unsigned num_of_buckets) {
+__device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, volatile unsigned &src_lane, volatile unsigned &src_key, volatile unsigned &src_bucket, volatile unsigned long long &read_data,
+                             volatile unsigned long long &next, volatile Slab **slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
-  bool to_share = (read_data == EMPTY || ((read_data >> 32) & 0xffffffff) == myKey[tid]);
+  unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
+  bool to_share = (key == EMPTY || key == myKey[tid]);
   int masked_ballot = __ballot_sync(~0, to_share) & VALID_KEY_MASK;
   unsigned dest_lane = (unsigned)__ffs(masked_ballot);
 
@@ -137,11 +145,14 @@ __device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey,
       unsigned long long key = (unsigned long long)myKey[tid];
       unsigned long long value = (unsigned long long)myValue[tid];
       unsigned long long newPair = (key << 32) | value;
-      unsigned long long *addr = SlabAddress(next, src_bucket, src_lane, slabs, num_of_buckets);
+      unsigned long long *addr = SlabAddress(next, src_bucket, dest_lane - 1, slabs, num_of_buckets);
       unsigned long long old_pair = atomicCAS(addr, 0, newPair);
       if (old_pair == 0) {
+        // printf("%d inserted\n", tid);
         is_active[tid] = false;
         __threadfence();
+      } else {
+        // printf("%d %d tried to insert but got %lld\n", tid, laneId, ((old_pair >> 32) & 0xffffffff));
       }
     }
   } else {
@@ -170,8 +181,8 @@ void setUp(unsigned size, unsigned numberOfSlabsPerBucket) {
 
     gpuErrchk(cudaMallocManaged(&(slabs[i]), sizeof(Slab) * numberOfSlabsPerBucket));
     for (int k = 0; k < numberOfSlabsPerBucket; k++) {
-      gpuErrchk(cudaMallocManaged(&(slabs[i][k].keyValue), sizeof(long) * 31));
-      gpuErrchk(cudaMallocManaged(&(slabs[i][k].next), sizeof(long)));
+      gpuErrchk(cudaMallocManaged((unsigned long long **)&(slabs[i][k].keyValue), sizeof(long) * 31));
+      gpuErrchk(cudaMallocManaged((unsigned long long **)&(slabs[i][k].next), sizeof(long)));
 
       for (int j = 0; j < 31; j++) {
         slabs[i][k].keyValue[j] = 0; // EMPTY_PAIR;

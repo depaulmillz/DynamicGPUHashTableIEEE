@@ -31,5 +31,4 @@ add_compile_options("$<$<CONFIG:DEBUG>:-DDEBUG>")
 ENABLE_TESTING()
 ADD_SUBDIRECTORY(tests)
 
-
-add_library(Operations Operations.cu)
+add_executable(ThroughputTest ThroughputTest.cu)
