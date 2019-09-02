@@ -248,7 +248,6 @@ int main(int argc, char **argv) {
     auto start = high_resolution_clock::now();
     for (int i = 0; i < ops / step; i++) {
       requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
-      gpuErrchk(cudaPeekAtLastError());
       gpuErrchk(cudaDeviceSynchronize());
     }
     auto end = high_resolution_clock::now();
