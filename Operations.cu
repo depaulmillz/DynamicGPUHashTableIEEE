@@ -28,15 +28,12 @@ __device__ unsigned long long ReadSlab(const unsigned long long &next, const uns
     printf("Error\n");
   }
   if (laneId != 31) {
-    // printf("%d : %d\n", laneId, slabs[src_bucket][next - 1].keyValue[laneId]);
     return slabs[src_bucket][next - 1].keyValue[laneId];
   }
-  // printf("%d : %d\n", laneId, slabs[src_bucket][next - 1].next);
   return *slabs[src_bucket][next - 1].next;
 }
 
 __device__ unsigned long long *SlabAddress(const unsigned long long &next, const unsigned &src_bucket, const unsigned laneId, Slab **slabs, unsigned num_of_buckets) {
-  // printf("Reading slabs[%d][%d]\n", src_bucket, next - 1);
   if (src_bucket >= num_of_buckets) {
     printf("Error\n");
   }
@@ -63,9 +60,7 @@ __device__ void warp_operation(volatile bool *is_active, volatile unsigned *myKe
   const unsigned laneId = threadIdx.x % 32;
   unsigned long long next = BASE_SLAB;
   volatile unsigned work_queue = __ballot_sync(~0, is_active[tid]);
-  if (is_active[tid]) {
-    printf("Work QUEUE %d\n", work_queue);
-  }
+
   volatile unsigned last_work_queue = work_queue;
 
   while (work_queue != 0) {
@@ -74,19 +69,11 @@ __device__ void warp_operation(volatile bool *is_active, volatile unsigned *myKe
     unsigned src_key = __shfl_sync(~0, myKey[tid], src_lane);
     unsigned src_bucket = hash(src_key);
     unsigned long long read_data = ReadSlab(next, src_bucket, laneId, slabs, num_of_buckets);
-    // printf("Read data %d\n", read_data);
-    if (is_active[tid]) {
-      // printf("next %d, src_lane %d, src_key %d, src_bucket %d, read_data %d\n", next, src_lane, src_key, src_bucket, read_data);
-    }
 
     operation(is_active, myKey, myValue, src_lane, src_key, src_bucket, read_data, next, slabs, num_of_buckets);
     last_work_queue = work_queue;
-    if (is_active[tid]) {
-      // printf("Still active %d\n", tid);
-    }
     bool activity = is_active[tid];
     work_queue = __ballot_sync(~0, activity);
-    // printf("%d\n", work_queue);
   }
 }
 
@@ -94,12 +81,11 @@ __device__ void warp_search(volatile bool *is_active, volatile unsigned *myKey, 
                             Slab **slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
-  unsigned found_lane = __ffs(__ballot_sync(VALID_KEY_MASK, read_data == src_key));
-  if (laneId == 0) {
-    printf("Found lane %d\n");
-  }
+  unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
+  unsigned found_lane = __ffs(__ballot_sync(~0, key == src_key) & VALID_KEY_MASK);
+
   if (found_lane != 0) {
-    unsigned long long found_value = __shfl_sync(~0, read_data, found_lane + 1);
+    unsigned long long found_value = __shfl_sync(~0, read_data, found_lane - 1);
     if (laneId == src_lane - 1) {
       myValue[tid] = found_value & 0xffffffff;
       is_active[tid] = false;
@@ -121,7 +107,8 @@ __device__ void warp_delete(volatile bool *is_active, volatile unsigned *myKey, 
                             unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
-  unsigned dest_lane = __ffs(__ballot_sync(VALID_KEY_MASK, read_data == src_key));
+  unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
+  unsigned dest_lane = __ffs(__ballot_sync(VALID_KEY_MASK, key == src_key));
   if (dest_lane != 0) {
     if (src_lane - 1 == laneId) {
       *(SlabAddress(next, src_bucket, src_lane, slabs, num_of_buckets)) = DELETED_KEY;
@@ -141,14 +128,8 @@ __device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey,
                              unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
-  // printf("Here %d\n", laneId);
   bool to_share = (read_data == EMPTY || ((read_data >> 32) & 0xffffffff) == myKey[tid]);
-  // printf("to_share : %d\n", to_share);
-
   int masked_ballot = __ballot_sync(~0, to_share) & VALID_KEY_MASK;
-
-  // printf("masked_ballot : %d\n", masked_ballot);
-
   unsigned dest_lane = (unsigned)__ffs(masked_ballot);
 
   if (dest_lane != 0) {
@@ -156,17 +137,12 @@ __device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey,
       unsigned long long key = (unsigned long long)myKey[tid];
       unsigned long long value = (unsigned long long)myValue[tid];
       unsigned long long newPair = (key << 32) | value;
-      // printf("New pair %lld\n", newPair);
       unsigned long long *addr = SlabAddress(next, src_bucket, src_lane, slabs, num_of_buckets);
       unsigned long long old_pair = atomicCAS(addr, 0, newPair);
       if (old_pair == 0) {
-        printf("Lane %d is operating\n", src_lane);
-        printf("Success\n");
         is_active[tid] = false;
-        printf("%d\n", is_active[tid]);
         __threadfence();
       }
-      // printf("Old pair %lld\n", old_pair);
     }
   } else {
     unsigned long long next_ptr = __shfl_sync(~0, read_data, ADDRESS_LANE);
@@ -193,21 +169,17 @@ void setUp(unsigned size, unsigned numberOfSlabsPerBucket) {
   for (int i = 0; i < size; i++) {
 
     gpuErrchk(cudaMallocManaged(&(slabs[i]), sizeof(Slab) * numberOfSlabsPerBucket));
-    printf("slabs[%d] has ptr %p\n", i, slabs[i]);
     for (int k = 0; k < numberOfSlabsPerBucket; k++) {
       gpuErrchk(cudaMallocManaged(&(slabs[i][k].keyValue), sizeof(long) * 31));
       gpuErrchk(cudaMallocManaged(&(slabs[i][k].next), sizeof(long)));
 
       for (int j = 0; j < 31; j++) {
         slabs[i][k].keyValue[j] = 0; // EMPTY_PAIR;
-        printf("Slab[%d][%d] has keyvalue %lld\n", i, k, slabs[i][k].keyValue[j]);
       }
       if (k < numberOfSlabsPerBucket - 1) {
         *slabs[i][k].next = k + 1;
-        printf("Slab[%d][%d] has next %lld which is k + 1\n", i, k, *slabs[i][k].next);
       } else {
         *slabs[i][k].next = 0; // EMPTY_POINTER;
-        printf("Slab[%d][%d] has next %lld which is an empty ptr\n", i, k, *slabs[i][k].next);
       }
     }
   }

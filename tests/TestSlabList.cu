@@ -11,7 +11,7 @@ void checkNotNull(T *ptr) {
   }
 }
 
-__global__ void functionTester(Slab **slabs, unsigned num_of_buckets, volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue) {
+__global__ void functionTester(Slab **slabs, unsigned num_of_buckets, volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, bool *results) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   is_active[tid] = false;
   myKey[tid] = 1;
@@ -24,7 +24,59 @@ __global__ void functionTester(Slab **slabs, unsigned num_of_buckets, volatile b
 
   warp_operation(is_active, myKey, myValue, warp_replace, slabs, num_of_buckets);
   if (threadIdx.x == 0) {
-    printf("%d %d %d\n", is_active, myKey, myValue);
+    printf("Insert: %d %d %d\n", is_active[tid], myKey[tid], myValue[tid]);
+  }
+
+  if (myKey[tid] == 1 && myValue[tid] == 2) {
+    results[0] = true;
+  }
+
+  is_active[tid] = false;
+  myKey[tid] = 1;
+  myValue[tid] = 0;
+  if (threadIdx.x == 0) {
+    is_active[tid] = true;
+  }
+
+  warp_operation(is_active, myKey, myValue, warp_search, slabs, num_of_buckets);
+  if (threadIdx.x == 0) {
+    printf("Read : %d %d %d\n", is_active[tid], myKey[tid], myValue[tid]);
+  }
+
+  if (myKey[tid] == 1 && myValue[tid] == 2) {
+    results[1] = true;
+  }
+
+  is_active[tid] = false;
+  myKey[tid] = 1;
+  myValue[tid] = 2;
+  if (threadIdx.x == 0) {
+    is_active[tid] = true;
+  }
+
+  warp_operation(is_active, myKey, myValue, warp_delete, slabs, num_of_buckets);
+  if (threadIdx.x == 0) {
+    printf("Removed : %d %d %d\n", is_active[tid], myKey[tid], myValue[tid]);
+  }
+
+  if (myKey[tid] == 1 && myValue[tid] == 2) {
+    results[2] = true;
+  }
+
+  is_active[tid] = false;
+  myKey[tid] = 1;
+  myValue[tid] = 0;
+  if (threadIdx.x == 0) {
+    is_active[tid] = true;
+  }
+
+  warp_operation(is_active, myKey, myValue, warp_search, slabs, num_of_buckets);
+  if (threadIdx.x == 0) {
+    printf("Read : %d %d %d\n", is_active[tid], myKey[tid], myValue[tid]);
+  }
+
+  if (myKey[tid] == 1 && myValue[tid] == 0) {
+    results[3] = true;
   }
 }
 
@@ -55,14 +107,26 @@ int main() {
   volatile bool *is_active;
   volatile unsigned *myKey;
   volatile unsigned *myValue;
+  bool *results;
 
   gpuErrchk(cudaMallocManaged(&is_active, sizeof(bool) * 32));
   gpuErrchk(cudaMallocManaged(&myKey, sizeof(unsigned) * 32));
   gpuErrchk(cudaMallocManaged(&myValue, sizeof(unsigned) * 32));
+  gpuErrchk(cudaMallocManaged(&results, sizeof(bool) * 4));
 
-  functionTester<<<1, 32>>>(slabs, num_of_buckets, is_active, myKey, myValue);
+  for (int i = 0; i < 4; i++) {
+    results[i] = false;
+  }
+
+  functionTester<<<1, 32>>>(slabs, num_of_buckets, is_active, myKey, myValue, results);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
+
+  for (int i = 0; i < 4; i++) {
+    if (!results[i]) {
+      throw std::runtime_error("Operations did not work\n");
+    }
+  }
 
   return 0;
 }
