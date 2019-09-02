@@ -30,6 +30,7 @@ __device__ unsigned long long ReadSlab(const volatile unsigned long long &next, 
   if (laneId != 31) {
     return slabs[src_bucket][next - 1].keyValue[laneId];
   }
+  // printf("Reading next from %d next is %lld \n", src_bucket, *slabs[src_bucket][next - 1].next);
   return *slabs[src_bucket][next - 1].next;
 }
 
@@ -70,7 +71,7 @@ __device__ void warp_operation(volatile bool *is_active, volatile unsigned *myKe
   while (work_queue != 0) {
     next = (work_queue != last_work_queue) ? (BASE_SLAB) : next;
     volatile unsigned src_lane = __ffs(work_queue);
-    volatile unsigned src_key = __shfl_sync(~0, myKey[tid], src_lane);
+    volatile unsigned src_key = __shfl_sync(~0, myKey[tid], src_lane - 1);
     volatile unsigned src_bucket = hash(src_key);
     // if (laneId == 0)
     //  printf("src_lane %d from %d: %d -> %d\n", src_lane, work_queue, src_key, src_bucket);
@@ -98,7 +99,7 @@ __device__ void warp_search(volatile bool *is_active, volatile unsigned *myKey, 
       is_active[tid] = false;
     }
   } else {
-    unsigned next_ptr = __shfl_sync(~0, read_data, ADDRESS_LANE);
+    unsigned long long next_ptr = __shfl_sync(~0, read_data, ADDRESS_LANE - 1);
     if (next_ptr == 0) {
       if (laneId == src_lane - 1) {
         myValue[tid] = SEARCH_NOT_FOUND;
@@ -122,7 +123,7 @@ __device__ void warp_delete(volatile bool *is_active, volatile unsigned *myKey, 
       is_active[tid] = false;
     }
   } else {
-    unsigned long long next_ptr = __shfl_sync(~0, read_data, ADDRESS_LANE);
+    unsigned long long next_ptr = __shfl_sync(~0, read_data, ADDRESS_LANE - 1);
     if (next_ptr == 0) {
       is_active[tid] = false;
     } else {
@@ -147,16 +148,17 @@ __device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey,
       unsigned long long newPair = (key << 32) | value;
       unsigned long long *addr = SlabAddress(next, src_bucket, dest_lane - 1, slabs, num_of_buckets);
       unsigned long long old_pair = atomicCAS(addr, 0, newPair);
-      if (old_pair == 0) {
+      if (old_pair == 0 || (unsigned)((old_pair >> 32) & 0xffffffff) == key) {
         // printf("%d inserted\n", tid);
         is_active[tid] = false;
         __threadfence();
       } else {
+
         // printf("%d %d tried to insert but got %lld\n", tid, laneId, ((old_pair >> 32) & 0xffffffff));
       }
     }
   } else {
-    unsigned long long next_ptr = __shfl_sync(~0, read_data, ADDRESS_LANE);
+    unsigned long long next_ptr = __shfl_sync(~0, read_data, ADDRESS_LANE - 1);
     if (next_ptr == 0) {
       unsigned long long new_slab_ptr = warp_allocate();
       if (laneId == ADDRESS_LANE) {
@@ -188,7 +190,7 @@ void setUp(unsigned size, unsigned numberOfSlabsPerBucket) {
         slabs[i][k].keyValue[j] = 0; // EMPTY_PAIR;
       }
       if (k < numberOfSlabsPerBucket - 1) {
-        *slabs[i][k].next = k + 1;
+        *slabs[i][k].next = (long)(k + 2);
       } else {
         *slabs[i][k].next = 0; // EMPTY_POINTER;
       }

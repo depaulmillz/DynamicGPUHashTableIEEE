@@ -1,4 +1,3 @@
-
 #include "Operations.cu"
 #include "gpuErrchk.cu"
 #include <cstdio>
@@ -32,6 +31,7 @@ __global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets, v
   } else {
     is_active[tid] = false;
   }
+
   warp_operation(is_active, myKey, myValue, warp_search, slabs, num_of_buckets);
 
   if (request[tid] == REQUEST_INSERT) {
@@ -125,9 +125,7 @@ int main(int argc, char **argv) {
 
   itr = s.begin();
 
-  int i;
-
-  for (i = 0; i < (int)(mapSize * loadFactor); i++) {
+  for (int i = 0; i < (int)(mapSize * loadFactor); i++) {
     request[i] = REQUEST_INSERT;
     myKey[i] = *itr;
     if (*itr == 0) {
@@ -137,23 +135,126 @@ int main(int argc, char **argv) {
     myValue[i] = i + 1;
     itr++;
   }
-  for (; i < allocationSize; i++) {
+  for (int i = (int)(mapSize * loadFactor); i < allocationSize; i++) {
     request[i] = EMPTY;
   }
 
   unsigned step = blocks * threadsPerBlock;
   for (int i = 0; i < allocationSize / mapSize; i++) {
-    printf("%d\n", i);
     requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
 
-  /*for (int i = 0; i < repeat; i++) {
-    requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active, myKey, myValue, request);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
-  }*/
+  for (int i = 0; i < repeat; i++) {
+
+    bool remove = true;
+    for (int k = 0; k < ops; k++) {
+      if (i < percentageWrites * ops) {
+        if (remove) {
+          int toInsert;
+          if (s.size() != 0) {
+            toInsert = (int)(rand() / (double)RAND_MAX * s.size());
+
+            itr = s.begin();
+            for (int w = 0; w < toInsert; w++) {
+              itr++;
+            }
+            toInsert = *itr;
+            canInsert.insert(*itr);
+            s.erase(itr);
+          } else {
+            toInsert = 1;
+          }
+
+          int requestSwap = REQUEST_REMOVE;
+          int j = 0;
+          for (; j < i && toInsert % mapSize > myKey[j] % mapSize; j++)
+            ;
+
+          for (; j <= i; j++) {
+            int temp = myKey[j];
+            int tempRequest = request[j];
+            myKey[j] = toInsert;
+            request[j] = requestSwap;
+            toInsert = temp;
+            requestSwap = tempRequest;
+          }
+        } else {
+          int toInsert;
+          if (canInsert.size() != 0) {
+            toInsert = (int)(rand() / (double)RAND_MAX * canInsert.size());
+
+            itr = canInsert.begin();
+            for (int w = 0; w < toInsert; w++) {
+              itr++;
+            }
+
+            toInsert = *itr;
+
+            s.insert(*itr);
+            canInsert.erase(itr);
+          } else {
+            toInsert = 1;
+          }
+
+          int requestSwap = REQUEST_INSERT;
+          int j = 0;
+          for (; j < i && toInsert % mapSize > myKey[j] % mapSize; j++)
+            ;
+
+          for (; j <= i; j++) {
+            int temp = myKey[j];
+            int tempRequest = request[j];
+            myKey[j] = toInsert;
+            request[j] = requestSwap;
+            toInsert = temp;
+            requestSwap = tempRequest;
+          }
+        }
+        remove = !remove;
+
+      } else {
+
+        int toInsert = (int)(rand() / (double)RAND_MAX * s.size());
+
+        itr = s.begin();
+        for (int w = 0; w < toInsert; w++) {
+          itr++;
+        }
+
+        toInsert = *itr;
+
+        int requestSwap = REQUEST_GET;
+        int j = 0;
+        for (; j < i && toInsert % mapSize > myKey[j] % mapSize; j++)
+          ;
+
+        for (; j <= i; j++) {
+          int temp = myKey[j];
+          int tempRequest = request[j];
+          myKey[j] = toInsert;
+          request[j] = requestSwap;
+          toInsert = temp;
+          requestSwap = tempRequest;
+        }
+      }
+    }
+    for (int k = ops; k < allocationSize; k++) {
+      request[k] = EMPTY;
+    }
+
+    cout << "Starting test" << endl;
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < ops / step; i++) {
+      requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
+      gpuErrchk(cudaPeekAtLastError());
+      gpuErrchk(cudaDeviceSynchronize());
+    }
+    auto end = high_resolution_clock::now();
+    duration<double> time_span = end - start;
+    cout << "Throughput " << ops / time_span.count() << " ops/s" << endl;
+  }
 }
 
 void printusage(char *exename) { cerr << "Usage: " << exename << " [-v] [-h] [-d | -u] [-r repeats] [-l loadFactor] [-w percentageWrites]" << endl; }
