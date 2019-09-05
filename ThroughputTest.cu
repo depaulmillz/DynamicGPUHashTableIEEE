@@ -109,7 +109,9 @@ int main(int argc, char **argv) {
   gpuErrchk(cudaMallocManaged(&myValue, sizeof(unsigned) * allocationSize));
   gpuErrchk(cudaMallocManaged(&request, sizeof(int) * allocationSize));
 
-  auto bigS = randomSet(mapSize + ops);
+  int sizeNeededForMap = max(mapSize, (int)(mapSize * loadFactor));
+
+  auto bigS = randomSet(sizeNeededForMap + ops);
   set<unsigned> s;
   set<unsigned> canInsert;
 
@@ -118,7 +120,7 @@ int main(int argc, char **argv) {
     s.emplace(*itr);
     itr++;
   }
-  for (int i = 0; i < ops + (int)(mapSize * 1 - loadFactor); i++) {
+  for (int i = 0; i < sizeNeededForMap + ops - (int)(mapSize * loadFactor); i++) {
     canInsert.emplace(*itr);
     itr++;
   }
