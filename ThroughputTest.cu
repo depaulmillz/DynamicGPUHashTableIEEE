@@ -82,6 +82,7 @@ int main(int argc, char **argv) {
       cerr << "\t-r repeats : changes the number of times the test is repeated" << endl;
       cerr << "\t-l loadFactor : sets the load factor of the test" << endl;
       cerr << "\t-w percentageWrites : sets the percentage of writes" << endl;
+      cerr << "\t-m mapsize : sets the map size" << endl;
 
       exit(0);
     case '?':
@@ -147,6 +148,8 @@ int main(int argc, char **argv) {
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
+
+  cout << "SLAB HASH TABLE\nLOAD FACTOR: " << loadFactor << "\nMAP SIZE: " << mapSize << endl << endl;
 
   for (int i = 0; i < repeat; i++) {
 
@@ -246,7 +249,7 @@ int main(int argc, char **argv) {
       request[k] = EMPTY;
     }
 
-    cout << "Starting test" << endl;
+    // cout << "Starting test" << endl;
     auto start = high_resolution_clock::now();
     for (int i = 0; i < ops / step; i++) {
       requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
@@ -258,7 +261,7 @@ int main(int argc, char **argv) {
   }
 }
 
-void printusage(char *exename) { cerr << "Usage: " << exename << " [-v] [-h] [-d | -u] [-r repeats] [-l loadFactor] [-w percentageWrites]" << endl; }
+void printusage(char *exename) { cerr << "Usage: " << exename << " [-v] [-h] [-d | -u] [-r repeats] [-l loadFactor] [-w percentageWrites] [-m mapsize]" << endl; }
 
 set<unsigned> randomSet(int size) {
   std::default_random_engine generator;
