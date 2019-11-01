@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
   unsigned mapSize = 100000;
   unsigned blocks = 6;
   unsigned threadsPerBlock = 512;
-  const int ops = blocks * threadsPerBlock * 32;
+  const int ops = 100000;
   float percentageWrites = 0.0;
   char c;
 
@@ -83,6 +83,8 @@ int main(int argc, char **argv) {
       exit(1);
     }
   }
+
+  printf("Populating data structure\n");
 
   unsigned numberOfSlabsPerBucket = 10;
 
@@ -172,7 +174,7 @@ int main(int argc, char **argv) {
     request[k] = EMPTY;
   }
 
-  cout << "Starting test" << endl;
+  cout << "Starting test with " << ops << " operations and a " << mapSize << " element map size" << endl;
   auto start = high_resolution_clock::now();
   for (int i = 0; i < ops / step; i++) {
     requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
@@ -215,9 +217,7 @@ int zipf(double alpha, int n) {
 
   // Pull a uniform random number (0 < z < 1)
   do {
-    std::default_random_engine generator;
-    std::uniform_real_distribution<double> distribution(0.0, 1.0);
-    z = distribution(generator);
+    z = rand() / (double)RAND_MAX;
   } while ((z == 0) || (z == 1));
 
   // Map z to the value

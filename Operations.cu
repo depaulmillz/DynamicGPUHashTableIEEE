@@ -153,10 +153,8 @@ __device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey,
         is_active[tid] = false;
         __threadfence();
       } else if ((unsigned)((old_pair >> 32) & 0xffffffff) == key) {
-        if (old_pair == atomicCAS(addr, old_pair, newPair)) {
-          is_active[tid] = false;
-          __threadfence();
-        }
+        is_active[tid] = false;
+        __threadfence();
         // printf("%d %d tried to insert but got %lld\n", tid, laneId, ((old_pair >> 32) & 0xffffffff));
       }
     }
