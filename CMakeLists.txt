@@ -32,3 +32,4 @@ ENABLE_TESTING()
 ADD_SUBDIRECTORY(tests)
 
 add_executable(ThroughputTest ThroughputTest.cu)
+add_executable(ThroughputTestZipf ThroughputTestZipf.cu)

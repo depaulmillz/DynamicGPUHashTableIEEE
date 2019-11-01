@@ -137,7 +137,7 @@ __device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey,
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
   unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
-  bool to_share = (key == EMPTY || key == myKey[tid]);
+  bool to_share = (key == EMPTY || key == src_key);
   int masked_ballot = __ballot_sync(~0, to_share) & VALID_KEY_MASK;
   unsigned dest_lane = (unsigned)__ffs(masked_ballot);
 
@@ -148,12 +148,15 @@ __device__ void warp_replace(volatile bool *is_active, volatile unsigned *myKey,
       unsigned long long newPair = (key << 32) | value;
       unsigned long long *addr = SlabAddress(next, src_bucket, dest_lane - 1, slabs, num_of_buckets);
       unsigned long long old_pair = atomicCAS(addr, 0, newPair);
-      if (old_pair == 0 || (unsigned)((old_pair >> 32) & 0xffffffff) == key) {
+      if (old_pair == 0) {
         // printf("%d inserted\n", tid);
         is_active[tid] = false;
         __threadfence();
-      } else {
-
+      } else if ((unsigned)((old_pair >> 32) & 0xffffffff) == key) {
+        if (old_pair == atomicCAS(addr, old_pair, newPair)) {
+          is_active[tid] = false;
+          __threadfence();
+        }
         // printf("%d %d tried to insert but got %lld\n", tid, laneId, ((old_pair >> 32) & 0xffffffff));
       }
     }
