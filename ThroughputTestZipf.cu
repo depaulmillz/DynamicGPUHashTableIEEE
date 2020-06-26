@@ -26,7 +26,9 @@ int zipf(double alpha, int n);
 void printusage(char *exename);
 set<unsigned> randomSet(int size);
 
-__global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets, volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, int *request) {
+__global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets,
+                               bool *is_active, unsigned *myKey,
+                               unsigned *myValue, int *request) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
   if (request[tid] == REQUEST_GET) {
@@ -42,7 +44,8 @@ __global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets, v
   } else {
     is_active[tid] = false;
   }
-  warp_operation(is_active, myKey, myValue, warp_replace, slabs, num_of_buckets);
+  warp_operation(is_active, myKey, myValue, warp_replace, slabs,
+                 num_of_buckets);
 
   if (request[tid] == REQUEST_REMOVE) {
     is_active[tid] = true;
@@ -90,12 +93,15 @@ int main(int argc, char **argv) {
 
   setUp(mapSize, numberOfSlabsPerBucket);
 
-  volatile bool *is_active;
-  volatile unsigned *myKey;
-  volatile unsigned *myValue;
+  bool *is_active;
+  unsigned *myKey;
+  unsigned *myValue;
   int *request;
 
-  unsigned allocationSize = ops > (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize) ? ops : (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize);
+  unsigned allocationSize =
+      ops > (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize)
+          ? ops
+          : (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize);
 
   gpuErrchk(cudaMallocManaged(&is_active, sizeof(bool) * allocationSize));
   gpuErrchk(cudaMallocManaged(&myKey, sizeof(unsigned) * allocationSize));
@@ -124,7 +130,9 @@ int main(int argc, char **argv) {
 
   unsigned step = blocks * threadsPerBlock;
   for (int i = 0; i < allocationSize / mapSize; i++) {
-    requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
+    requestHandler<<<blocks, threadsPerBlock>>>(
+        slabs, num_of_buckets, is_active + step * i, myKey + step * i,
+        myValue + step * i, request + step * i);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
@@ -174,10 +182,13 @@ int main(int argc, char **argv) {
     request[k] = EMPTY;
   }
 
-  cout << "Starting test with " << ops << " operations and a " << mapSize << " element map size" << endl;
+  cout << "Starting test with " << ops << " operations and a " << mapSize
+       << " element map size" << endl;
   auto start = high_resolution_clock::now();
   for (int i = 0; i < ops / step; i++) {
-    requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
+    requestHandler<<<blocks, threadsPerBlock>>>(
+        slabs, num_of_buckets, is_active + step * i, myKey + step * i,
+        myValue + step * i, request + step * i);
     gpuErrchk(cudaDeviceSynchronize());
   }
   auto end = high_resolution_clock::now();
@@ -185,7 +196,12 @@ int main(int argc, char **argv) {
   cout << "Throughput " << ops / time_span.count() << " ops/s" << endl;
 }
 
-void printusage(char *exename) { cerr << "Usage: " << exename << " [-v] [-h] [-d | -u] [-r repeats] [-l loadFactor] [-w percentageWrites]" << endl; }
+void printusage(char *exename) {
+  cerr << "Usage: " << exename
+       << " [-v] [-h] [-d | -u] [-r repeats] [-l loadFactor] [-w "
+          "percentageWrites]"
+       << endl;
+}
 
 set<unsigned> randomSet(int size) {
   std::default_random_engine generator;

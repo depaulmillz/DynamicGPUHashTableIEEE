@@ -23,7 +23,9 @@ extern int optopt;
 void printusage(char *exename);
 set<unsigned> randomSet(int size);
 
-__global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets, volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, int *request) {
+__global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets,
+                               bool *is_active, unsigned *myKey,
+                               unsigned *myValue, int *request) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
   if (request[tid] == REQUEST_GET) {
@@ -39,7 +41,8 @@ __global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets, v
   } else {
     is_active[tid] = false;
   }
-  warp_operation(is_active, myKey, myValue, warp_replace, slabs, num_of_buckets);
+  warp_operation(is_active, myKey, myValue, warp_replace, slabs,
+                 num_of_buckets);
 
   if (request[tid] == REQUEST_REMOVE) {
     is_active[tid] = true;
@@ -51,12 +54,12 @@ __global__ void requestHandler(volatile Slab **slabs, unsigned num_of_buckets, v
 
 int main(int argc, char **argv) {
   unsigned mapSize = 10000;
-  unsigned blocks = 6;
+  unsigned blocks = 68;
   unsigned threadsPerBlock = 512;
   const int ops = blocks * threadsPerBlock;
   float percentageWrites = 0.0;
   int repeat = 3;
-  double loadFactor = 0.7;
+  double loadFactor = 0.5;
   char c;
 
   while ((c = getopt(argc, argv, "hr:l:w:m:")) != -1) {
@@ -79,7 +82,8 @@ int main(int argc, char **argv) {
     case 'h':
       printusage(argv[0]);
       cerr << "\t-h : help" << endl;
-      cerr << "\t-r repeats : changes the number of times the test is repeated" << endl;
+      cerr << "\t-r repeats : changes the number of times the test is repeated"
+           << endl;
       cerr << "\t-l loadFactor : sets the load factor of the test" << endl;
       cerr << "\t-w percentageWrites : sets the percentage of writes" << endl;
       cerr << "\t-m mapsize : sets the map size" << endl;
@@ -98,17 +102,24 @@ int main(int argc, char **argv) {
 
   setUp(mapSize, numberOfSlabsPerBucket);
 
-  volatile bool *is_active;
-  volatile unsigned *myKey;
-  volatile unsigned *myValue;
-  int *request;
+  bool *is_active_k, *is_active_h;
+  unsigned *myKey_k, *myKey_h;
+  unsigned *myValue_k, *myValue_h;
+  int *request_k, *request_h;
 
-  unsigned allocationSize = ops > (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize) ? ops : (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize);
+  unsigned allocationSize =
+      ops > (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize)
+          ? ops
+          : (unsigned)(ceil(mapSize / blocks / threadsPerBlock) * mapSize);
 
-  gpuErrchk(cudaMallocManaged(&is_active, sizeof(bool) * allocationSize));
-  gpuErrchk(cudaMallocManaged(&myKey, sizeof(unsigned) * allocationSize));
-  gpuErrchk(cudaMallocManaged(&myValue, sizeof(unsigned) * allocationSize));
-  gpuErrchk(cudaMallocManaged(&request, sizeof(int) * allocationSize));
+  gpuErrchk(cudaMalloc(&is_active_k, sizeof(bool) * allocationSize));
+  is_active_h = new bool[allocationSize];
+  gpuErrchk(cudaMalloc(&myKey_k, sizeof(unsigned) * allocationSize));
+  myKey_h = new unsigned[allocationSize];
+  gpuErrchk(cudaMalloc(&myValue_k, sizeof(unsigned) * allocationSize));
+  myValue_h = new unsigned[allocationSize];
+  gpuErrchk(cudaMalloc(&request_k, sizeof(int) * allocationSize));
+  request_h = new int[allocationSize];
 
   int sizeNeededForMap = max(mapSize, (int)(mapSize * loadFactor));
 
@@ -121,7 +132,8 @@ int main(int argc, char **argv) {
     s.emplace(*itr);
     itr++;
   }
-  for (int i = 0; i < sizeNeededForMap + ops - (int)(mapSize * loadFactor); i++) {
+  for (int i = 0; i < sizeNeededForMap + ops - (int)(mapSize * loadFactor);
+       i++) {
     canInsert.emplace(*itr);
     itr++;
   }
@@ -129,27 +141,49 @@ int main(int argc, char **argv) {
   itr = s.begin();
 
   for (int i = 0; i < (int)(mapSize * loadFactor); i++) {
-    request[i] = REQUEST_INSERT;
-    myKey[i] = *itr;
+    request_h[i] = REQUEST_INSERT;
+    myKey_h[i] = *itr;
     if (*itr == 0) {
       printf("Error iterator cannot be 0\n");
       exit(1);
     }
-    myValue[i] = i + 1;
+    myValue_h[i] = i + 1;
     itr++;
   }
   for (int i = (int)(mapSize * loadFactor); i < allocationSize; i++) {
-    request[i] = EMPTY;
+    request_h[i] = EMPTY;
   }
+
+  gpuErrchk(cudaMemcpy(is_active_k, is_active_h, sizeof(bool) * allocationSize,
+                       cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(myKey_k, myKey_h, sizeof(unsigned) * allocationSize,
+                       cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(myValue_k, myValue_h, sizeof(unsigned) * allocationSize,
+                       cudaMemcpyHostToDevice));
+  gpuErrchk(cudaMemcpy(request_k, request_h, sizeof(int) * allocationSize,
+                       cudaMemcpyHostToDevice));
 
   unsigned step = blocks * threadsPerBlock;
   for (int i = 0; i < allocationSize / mapSize; i++) {
-    requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
+    requestHandler<<<blocks, threadsPerBlock>>>(
+        slabs, num_of_buckets, is_active_k + step * i, myKey_k + step * i,
+        myValue_k + step * i, request_k + step * i);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
 
-  cout << "SLAB HASH TABLE\nLOAD FACTOR: " << loadFactor << "\nMAP SIZE: " << mapSize << endl << endl;
+  gpuErrchk(cudaMemcpy(is_active_h, is_active_k, sizeof(bool) * allocationSize,
+                       cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy(myKey_h, myKey_k, sizeof(unsigned) * allocationSize,
+                       cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy(myValue_h, myValue_k, sizeof(unsigned) * allocationSize,
+                       cudaMemcpyDeviceToHost));
+  gpuErrchk(cudaMemcpy(request_h, request_k, sizeof(int) * allocationSize,
+                       cudaMemcpyDeviceToHost));
+
+  cout << "SLAB HASH TABLE\nLOAD FACTOR: " << loadFactor
+       << "\nMAP SIZE: " << mapSize << endl
+       << endl;
 
   for (int i = 0; i < repeat; i++) {
 
@@ -174,14 +208,14 @@ int main(int argc, char **argv) {
 
           int requestSwap = REQUEST_REMOVE;
           int j = 0;
-          for (; j < i && toInsert % mapSize > myKey[j] % mapSize; j++)
+          for (; j < i && toInsert % mapSize > myKey_h[j] % mapSize; j++)
             ;
 
           for (; j <= i; j++) {
-            int temp = myKey[j];
-            int tempRequest = request[j];
-            myKey[j] = toInsert;
-            request[j] = requestSwap;
+            int temp = myKey_h[j];
+            int tempRequest = request_h[j];
+            myKey_h[j] = toInsert;
+            request_h[j] = requestSwap;
             toInsert = temp;
             requestSwap = tempRequest;
           }
@@ -205,14 +239,14 @@ int main(int argc, char **argv) {
 
           int requestSwap = REQUEST_INSERT;
           int j = 0;
-          for (; j < i && toInsert % mapSize > myKey[j] % mapSize; j++)
+          for (; j < i && toInsert % mapSize > myKey_h[j] % mapSize; j++)
             ;
 
           for (; j <= i; j++) {
-            int temp = myKey[j];
-            int tempRequest = request[j];
-            myKey[j] = toInsert;
-            request[j] = requestSwap;
+            int temp = myKey_h[j];
+            int tempRequest = request_h[j];
+            myKey_h[j] = toInsert;
+            request_h[j] = requestSwap;
             toInsert = temp;
             requestSwap = tempRequest;
           }
@@ -232,36 +266,54 @@ int main(int argc, char **argv) {
 
         int requestSwap = REQUEST_GET;
         int j = 0;
-        for (; j < i && toInsert % mapSize > myKey[j] % mapSize; j++)
+        for (; j < i && toInsert % mapSize > myKey_h[j] % mapSize; j++)
           ;
 
         for (; j <= i; j++) {
-          int temp = myKey[j];
-          int tempRequest = request[j];
-          myKey[j] = toInsert;
-          request[j] = requestSwap;
+          int temp = myKey_h[j];
+          int tempRequest = request_h[j];
+          myKey_h[j] = toInsert;
+          request_h[j] = requestSwap;
           toInsert = temp;
           requestSwap = tempRequest;
         }
       }
     }
     for (int k = ops; k < allocationSize; k++) {
-      request[k] = EMPTY;
+      request_h[k] = EMPTY;
     }
+
+    gpuErrchk(cudaMemcpy(is_active_k, is_active_h,
+                         sizeof(bool) * allocationSize,
+                         cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(myKey_k, myKey_h, sizeof(unsigned) * allocationSize,
+                         cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(myValue_k, myValue_h,
+                         sizeof(unsigned) * allocationSize,
+                         cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(request_k, request_h, sizeof(int) * allocationSize,
+                         cudaMemcpyHostToDevice));
 
     // cout << "Starting test" << endl;
     auto start = high_resolution_clock::now();
     for (int i = 0; i < ops / step; i++) {
-      requestHandler<<<blocks, threadsPerBlock>>>(slabs, num_of_buckets, is_active + step * i, myKey + step * i, myValue + step * i, request + step * i);
+      requestHandler<<<blocks, threadsPerBlock>>>(
+          slabs, num_of_buckets, is_active_k + step * i, myKey_k + step * i,
+          myValue_k + step * i, request_k + step * i);
       gpuErrchk(cudaDeviceSynchronize());
     }
     auto end = high_resolution_clock::now();
     duration<double> time_span = end - start;
-    cout << "Throughput " << ops / time_span.count() << " ops/s" << endl;
+    cout << "Throughput " << ops / time_span.count() / 1e6 << " Mops/s" << endl;
   }
 }
 
-void printusage(char *exename) { cerr << "Usage: " << exename << " [-v] [-h] [-d | -u] [-r repeats] [-l loadFactor] [-w percentageWrites] [-m mapsize]" << endl; }
+void printusage(char *exename) {
+  cerr << "Usage: " << exename
+       << " [-v] [-h] [-d | -u] [-r repeats] [-l loadFactor] [-w "
+          "percentageWrites] [-m mapsize]"
+       << endl;
+}
 
 set<unsigned> randomSet(int size) {
   std::default_random_engine generator;

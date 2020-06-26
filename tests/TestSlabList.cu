@@ -11,7 +11,9 @@ void checkNotNull(T *ptr) {
   }
 }
 
-__global__ void functionTester(volatile Slab **slabs, unsigned num_of_buckets, volatile bool *is_active, volatile unsigned *myKey, volatile unsigned *myValue, bool *results) {
+__global__ void functionTester(volatile Slab **slabs, unsigned num_of_buckets,
+                               bool *is_active, unsigned *myKey,
+                               unsigned *myValue, bool *results) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   is_active[tid] = false;
   myKey[tid] = 1;
@@ -22,7 +24,8 @@ __global__ void functionTester(volatile Slab **slabs, unsigned num_of_buckets, v
     is_active[tid] = false;
   }
 
-  warp_operation(is_active, myKey, myValue, warp_replace, slabs, num_of_buckets);
+  warp_operation(is_active, myKey, myValue, warp_replace, slabs,
+                 num_of_buckets);
   if (threadIdx.x == 0) {
     printf("Insert: %d %d %d\n", is_active[tid], myKey[tid], myValue[tid]);
   }
@@ -104,9 +107,9 @@ int main() {
     checkNotNull(slabs[i]);
   }
 
-  volatile bool *is_active;
-  volatile unsigned *myKey;
-  volatile unsigned *myValue;
+  bool *is_active;
+  unsigned *myKey;
+  unsigned *myValue;
   bool *results;
 
   gpuErrchk(cudaMallocManaged(&is_active, sizeof(bool) * 32));
@@ -118,7 +121,8 @@ int main() {
     results[i] = false;
   }
 
-  functionTester<<<1, 32>>>(slabs, num_of_buckets, is_active, myKey, myValue, results);
+  functionTester<<<1, 32>>>(slabs, num_of_buckets, is_active, myKey, myValue,
+                            results);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
