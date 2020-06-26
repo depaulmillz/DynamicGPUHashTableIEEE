@@ -63,15 +63,15 @@ __forceinline__ __device__ unsigned long long deallocate(unsigned long long l) {
   return 0;
 }
 
-__forceinline__ __device__ void warp_operation(
-    bool *__restrict__ is_active, const unsigned *__restrict__ myKey,
-    unsigned *__restrict__ myValue,
-    const nvstd::function<void(bool *__restrict__, const unsigned *__restrict__,
-                               unsigned *__restrict__, unsigned &, unsigned &,
-                               unsigned &, unsigned long long &,
-                               unsigned long long &, volatile Slab **,
-                               unsigned)> &operation,
-    volatile Slab **slabs, unsigned num_of_buckets) {
+__forceinline__ __device__ void
+warp_operation(bool *__restrict__ is_active, const unsigned *__restrict__ myKey,
+               unsigned *__restrict__ myValue,
+               const nvstd::function<
+                   void(bool *__restrict__, const unsigned *__restrict__,
+                        unsigned *__restrict__, unsigned &, unsigned &,
+                        unsigned &, unsigned long long &, unsigned long long &,
+                        volatile Slab **__restrict__, unsigned)> &operation,
+               volatile Slab **__restrict__ slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x & 0x1F;
   unsigned long long next = BASE_SLAB;
@@ -104,7 +104,7 @@ warp_search(bool *__restrict__ is_active, const unsigned *__restrict__ myKey,
             unsigned *__restrict__ myValue, unsigned &src_lane,
             unsigned &src_key, unsigned &src_bucket,
             unsigned long long &read_data, unsigned long long &next,
-            volatile Slab **slabs, unsigned num_of_buckets) {
+            volatile Slab **__restrict__ slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
   unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
@@ -135,7 +135,7 @@ warp_delete(bool *__restrict__ is_active, const unsigned *__restrict__ myKey,
             unsigned *__restrict__ myValue, unsigned &src_lane,
             unsigned &src_key, unsigned &src_bucket,
             unsigned long long &read_data, unsigned long long &next,
-            volatile Slab **slabs, unsigned num_of_buckets) {
+            volatile Slab **__restrict__ slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
   unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
@@ -161,7 +161,7 @@ warp_replace(bool *__restrict__ is_active, const unsigned *__restrict__ myKey,
              unsigned *__restrict__ myValue, unsigned &src_lane,
              unsigned &src_key, unsigned &src_bucket,
              unsigned long long &read_data, unsigned long long &next,
-             volatile Slab **slabs, unsigned num_of_buckets) {
+             volatile Slab **__restrict__ slabs, unsigned num_of_buckets) {
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
   const unsigned laneId = threadIdx.x % 32;
   unsigned key = (unsigned)((read_data >> 32) & 0xffffffff);
